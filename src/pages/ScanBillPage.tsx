@@ -1,31 +1,21 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, Upload, Loader2, Check, X, AlertCircle } from 'lucide-react';
+import { Camera, Upload, Loader2, Check, X, AlertCircle, RefreshCw } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { OCRResult, OCRItem } from '@/types/pharmacy';
+import { processOCR } from '@/lib/api/ocr';
 
-// Simulated OCR result for demo
-const DEMO_OCR_RESULT: OCRResult = {
-  supplierName: 'ABC Pharma Distributors',
-  invoiceNumber: 'INV-2024-0847',
-  invoiceDate: '2024-01-15',
-  items: [
-    { medicineName: 'Paracetamol 500mg', quantity: 100, purchaseRate: 18, mrp: 25, batchNumber: 'PAR2025A', expiryDate: '2025-12', confidence: 95 },
-    { medicineName: 'Amoxicillin 250mg', quantity: 50, purchaseRate: 45, mrp: 65, batchNumber: 'AMX2025B', expiryDate: '2025-08', confidence: 88 },
-    { medicineName: 'Omeprazole 20mg', quantity: 80, purchaseRate: 32, mrp: 48, batchNumber: 'OMP2025C', expiryDate: '2025-10', confidence: 92 },
-    { medicineName: 'Cetirizine 10mg', quantity: 200, purchaseRate: 8, mrp: 15, batchNumber: 'CET2025D', expiryDate: '2026-03', confidence: 78 },
-  ],
-};
-
-type ScanStep = 'capture' | 'processing' | 'review';
+type ScanStep = 'capture' | 'processing' | 'review' | 'error';
 
 export default function ScanBillPage() {
   const [step, setStep] = useState<ScanStep>('capture');
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [capturedFile, setCapturedFile] = useState<File | null>(null);
   const [ocrResult, setOcrResult] = useState<OCRResult | null>(null);
   const [editedItems, setEditedItems] = useState<OCRItem[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string>('');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
@@ -35,21 +25,46 @@ export default function ScanBillPage() {
     // Create preview URL
     const imageUrl = URL.createObjectURL(file);
     setCapturedImage(imageUrl);
+    setCapturedFile(file);
     setStep('processing');
+    setErrorMessage('');
 
-    // Simulate OCR processing
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-
-    // Use demo result
-    setOcrResult(DEMO_OCR_RESULT);
-    setEditedItems([...DEMO_OCR_RESULT.items]);
-    setStep('review');
+    try {
+      // Call real OCR API
+      const result = await processOCR(file);
+      
+      if (result.success && result.data) {
+        setOcrResult(result.data);
+        setEditedItems([...result.data.items]);
+        setStep('review');
+        
+        toast({
+          title: 'Bill Scanned!',
+          description: `Extracted ${result.data.items.length} items from the bill`,
+        });
+      } else {
+        setErrorMessage(result.error || 'Failed to extract data from image');
+        setStep('error');
+      }
+    } catch (error) {
+      console.error('OCR error:', error);
+      setErrorMessage('Failed to process the bill. Please try again.');
+      setStep('error');
+    }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       handleCapture(file);
+    }
+  };
+
+  const handleRetry = () => {
+    if (capturedFile) {
+      handleCapture(capturedFile);
+    } else {
+      setStep('capture');
     }
   };
 
@@ -73,6 +88,21 @@ export default function ScanBillPage() {
     setEditedItems((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const addEmptyItem = () => {
+    setEditedItems((prev) => [
+      ...prev,
+      {
+        medicineName: '',
+        quantity: 0,
+        purchaseRate: 0,
+        mrp: 0,
+        batchNumber: '',
+        expiryDate: '',
+        confidence: 100,
+      },
+    ]);
+  };
+
   return (
     <AppLayout title="Scan Purchase Bill">
       <div className="p-4">
@@ -85,7 +115,7 @@ export default function ScanBillPage() {
                 <li>• Place the bill on a flat surface</li>
                 <li>• Ensure good lighting</li>
                 <li>• Capture the full bill clearly</li>
-                <li>• Wait for auto-extraction</li>
+                <li>• AI will extract medicine details</li>
               </ul>
             </div>
 
@@ -126,15 +156,6 @@ export default function ScanBillPage() {
                 Upload from Gallery
               </Button>
             </div>
-
-            {/* Demo Button */}
-            <Button
-              variant="secondary"
-              onClick={() => handleCapture(new File([''], 'demo.jpg'))}
-              className="w-full h-12 touch-feedback"
-            >
-              Try Demo Scan
-            </Button>
           </div>
         )}
 
@@ -151,8 +172,44 @@ export default function ScanBillPage() {
               <Loader2 className="w-12 h-12 text-primary animate-spin mx-auto mb-4" />
               <h3 className="text-lg font-semibold text-foreground">Processing Bill...</h3>
               <p className="text-sm text-muted-foreground mt-1">
-                Extracting medicine details
+                AI is extracting medicine details
               </p>
+            </div>
+          </div>
+        )}
+
+        {step === 'error' && (
+          <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-6">
+            {capturedImage && (
+              <img
+                src={capturedImage}
+                alt="Captured bill"
+                className="w-full max-w-[300px] rounded-xl card-elevated opacity-75"
+              />
+            )}
+            <div className="text-center">
+              <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-foreground">Processing Failed</h3>
+              <p className="text-sm text-muted-foreground mt-1 max-w-[280px]">
+                {errorMessage}
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 w-full max-w-[300px]">
+              <Button onClick={handleRetry} className="touch-feedback">
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Try Again
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setStep('capture');
+                  setCapturedImage(null);
+                  setCapturedFile(null);
+                }}
+                className="touch-feedback"
+              >
+                Scan Different Bill
+              </Button>
             </div>
           </div>
         )}
@@ -164,24 +221,29 @@ export default function ScanBillPage() {
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-muted-foreground">Supplier</p>
-                  <p className="font-semibold">{ocrResult.supplierName}</p>
+                  <p className="font-semibold">{ocrResult.supplierName || 'Not detected'}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Invoice No.</p>
-                  <p className="font-semibold">{ocrResult.invoiceNumber}</p>
+                  <p className="font-semibold">{ocrResult.invoiceNumber || 'Not detected'}</p>
                 </div>
                 <div className="col-span-2">
                   <p className="text-muted-foreground">Date</p>
-                  <p className="font-semibold">{ocrResult.invoiceDate}</p>
+                  <p className="font-semibold">{ocrResult.invoiceDate || 'Not detected'}</p>
                 </div>
               </div>
             </div>
 
             {/* Items List */}
             <div className="space-y-3">
-              <h3 className="font-semibold text-foreground">
-                Extracted Items ({editedItems.length})
-              </h3>
+              <div className="flex justify-between items-center">
+                <h3 className="font-semibold text-foreground">
+                  Extracted Items ({editedItems.length})
+                </h3>
+                <Button variant="ghost" size="sm" onClick={addEmptyItem}>
+                  + Add Item
+                </Button>
+              </div>
               
               {editedItems.map((item, index) => (
                 <div
@@ -202,6 +264,7 @@ export default function ScanBillPage() {
                       type="text"
                       value={item.medicineName}
                       onChange={(e) => updateItem(index, 'medicineName', e.target.value)}
+                      placeholder="Medicine name"
                       className="font-semibold text-foreground bg-transparent border-b border-transparent hover:border-border focus:border-primary focus:outline-none flex-1 mr-2"
                     />
                     <button
@@ -267,6 +330,7 @@ export default function ScanBillPage() {
             <div className="sticky bottom-20 bg-background pt-4 pb-2 space-y-3">
               <Button
                 onClick={handleConfirm}
+                disabled={editedItems.length === 0}
                 className="w-full h-14 text-base font-semibold touch-feedback"
               >
                 <Check className="w-5 h-5 mr-2" />
@@ -278,6 +342,7 @@ export default function ScanBillPage() {
                 onClick={() => {
                   setStep('capture');
                   setCapturedImage(null);
+                  setCapturedFile(null);
                   setOcrResult(null);
                 }}
                 className="w-full h-12 touch-feedback"
