@@ -14,7 +14,229 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      batches: {
+        Row: {
+          batch_number: string
+          created_at: string
+          expiry_date: string
+          id: string
+          medicine_id: string
+          mrp: number
+          purchase_invoice_id: string | null
+          purchase_rate: number
+          quantity: number
+          updated_at: string
+        }
+        Insert: {
+          batch_number: string
+          created_at?: string
+          expiry_date: string
+          id?: string
+          medicine_id: string
+          mrp: number
+          purchase_invoice_id?: string | null
+          purchase_rate: number
+          quantity?: number
+          updated_at?: string
+        }
+        Update: {
+          batch_number?: string
+          created_at?: string
+          expiry_date?: string
+          id?: string
+          medicine_id?: string
+          mrp?: number
+          purchase_invoice_id?: string | null
+          purchase_rate?: number
+          quantity?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "batches_medicine_id_fkey"
+            columns: ["medicine_id"]
+            isOneToOne: false
+            referencedRelation: "medicines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "batches_purchase_invoice_id_fkey"
+            columns: ["purchase_invoice_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      medicines: {
+        Row: {
+          category: string | null
+          created_at: string
+          gst_rate: number
+          hsn_code: string | null
+          id: string
+          is_active: boolean
+          manufacturer: string | null
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          gst_rate?: number
+          hsn_code?: string | null
+          id?: string
+          is_active?: boolean
+          manufacturer?: string | null
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          gst_rate?: number
+          hsn_code?: string | null
+          id?: string
+          is_active?: boolean
+          manufacturer?: string | null
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      purchase_invoices: {
+        Row: {
+          created_at: string
+          gst_amount: number
+          id: string
+          invoice_date: string | null
+          invoice_number: string | null
+          scanned_image_url: string | null
+          supplier_gst: string | null
+          supplier_name: string | null
+          total_amount: number
+        }
+        Insert: {
+          created_at?: string
+          gst_amount?: number
+          id?: string
+          invoice_date?: string | null
+          invoice_number?: string | null
+          scanned_image_url?: string | null
+          supplier_gst?: string | null
+          supplier_name?: string | null
+          total_amount?: number
+        }
+        Update: {
+          created_at?: string
+          gst_amount?: number
+          id?: string
+          invoice_date?: string | null
+          invoice_number?: string | null
+          scanned_image_url?: string | null
+          supplier_gst?: string | null
+          supplier_name?: string | null
+          total_amount?: number
+        }
+        Relationships: []
+      }
+      sale_items: {
+        Row: {
+          amount: number
+          batch_id: string
+          batch_number: string
+          created_at: string
+          id: string
+          medicine_id: string
+          medicine_name: string
+          mrp: number
+          quantity: number
+          sale_id: string
+        }
+        Insert: {
+          amount: number
+          batch_id: string
+          batch_number: string
+          created_at?: string
+          id?: string
+          medicine_id: string
+          medicine_name: string
+          mrp: number
+          quantity: number
+          sale_id: string
+        }
+        Update: {
+          amount?: number
+          batch_id?: string
+          batch_number?: string
+          created_at?: string
+          id?: string
+          medicine_id?: string
+          medicine_name?: string
+          mrp?: number
+          quantity?: number
+          sale_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sale_items_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sale_items_medicine_id_fkey"
+            columns: ["medicine_id"]
+            isOneToOne: false
+            referencedRelation: "medicines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sale_items_sale_id_fkey"
+            columns: ["sale_id"]
+            isOneToOne: false
+            referencedRelation: "sales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales: {
+        Row: {
+          bill_number: string
+          created_at: string
+          customer_name: string | null
+          customer_phone: string | null
+          discount: number
+          id: string
+          net_amount: number
+          payment_mode: string
+          total_amount: number
+        }
+        Insert: {
+          bill_number: string
+          created_at?: string
+          customer_name?: string | null
+          customer_phone?: string | null
+          discount?: number
+          id?: string
+          net_amount?: number
+          payment_mode?: string
+          total_amount?: number
+        }
+        Update: {
+          bill_number?: string
+          created_at?: string
+          customer_name?: string | null
+          customer_phone?: string | null
+          discount?: number
+          id?: string
+          net_amount?: number
+          payment_mode?: string
+          total_amount?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

@@ -1,38 +1,135 @@
-import { useState, useEffect } from 'react';
-import { Medicine, Batch, PurchaseInvoice, Sale, StockAlert } from '@/types/pharmacy';
+import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+import { Medicine, Batch, StockAlert, OCRItem } from '@/types/pharmacy';
+import { useToast } from '@/hooks/use-toast';
 
-// Demo data for the pharmacy
-const DEMO_MEDICINES: Medicine[] = [
-  { id: '1', name: 'Paracetamol 500mg', manufacturer: 'Cipla', gstRate: 12, isActive: true },
-  { id: '2', name: 'Amoxicillin 250mg', manufacturer: 'Sun Pharma', gstRate: 12, isActive: true },
-  { id: '3', name: 'Omeprazole 20mg', manufacturer: 'Dr. Reddy\'s', gstRate: 12, isActive: true },
-  { id: '4', name: 'Metformin 500mg', manufacturer: 'Mankind', gstRate: 12, isActive: true },
-  { id: '5', name: 'Azithromycin 500mg', manufacturer: 'Zydus', gstRate: 12, isActive: true },
-  { id: '6', name: 'Cetirizine 10mg', manufacturer: 'Cipla', gstRate: 12, isActive: true },
-  { id: '7', name: 'Pan D', manufacturer: 'Alkem', gstRate: 12, isActive: true },
-  { id: '8', name: 'Dolo 650', manufacturer: 'Micro Labs', gstRate: 12, isActive: true },
-];
+interface DbMedicine {
+  id: string;
+  name: string;
+  manufacturer: string | null;
+  category: string | null;
+  hsn_code: string | null;
+  gst_rate: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
-const DEMO_BATCHES: Batch[] = [
-  { id: 'b1', medicineId: '1', batchNumber: 'PAR2024A', expiryDate: '2025-06', purchaseRate: 18, mrp: 25, quantity: 150, purchaseInvoiceId: 'inv1' },
-  { id: 'b2', medicineId: '1', batchNumber: 'PAR2024B', expiryDate: '2025-12', purchaseRate: 19, mrp: 26, quantity: 200, purchaseInvoiceId: 'inv2' },
-  { id: 'b3', medicineId: '2', batchNumber: 'AMX2024X', expiryDate: '2025-03', purchaseRate: 45, mrp: 65, quantity: 80, purchaseInvoiceId: 'inv1' },
-  { id: 'b4', medicineId: '3', batchNumber: 'OMP2024Y', expiryDate: '2025-08', purchaseRate: 32, mrp: 48, quantity: 120, purchaseInvoiceId: 'inv2' },
-  { id: 'b5', medicineId: '4', batchNumber: 'MET2024Z', expiryDate: '2025-01', purchaseRate: 22, mrp: 35, quantity: 15, purchaseInvoiceId: 'inv1' },
-  { id: 'b6', medicineId: '5', batchNumber: 'AZI2024W', expiryDate: '2024-12', purchaseRate: 85, mrp: 120, quantity: 45, purchaseInvoiceId: 'inv2' },
-  { id: 'b7', medicineId: '6', batchNumber: 'CET2024V', expiryDate: '2026-03', purchaseRate: 8, mrp: 15, quantity: 300, purchaseInvoiceId: 'inv1' },
-  { id: 'b8', medicineId: '7', batchNumber: 'PAN2024U', expiryDate: '2025-09', purchaseRate: 55, mrp: 85, quantity: 90, purchaseInvoiceId: 'inv2' },
-  { id: 'b9', medicineId: '8', batchNumber: 'DOL2024T', expiryDate: '2025-11', purchaseRate: 22, mrp: 32, quantity: 250, purchaseInvoiceId: 'inv1' },
-];
+interface DbBatch {
+  id: string;
+  medicine_id: string;
+  batch_number: string;
+  expiry_date: string;
+  purchase_rate: number;
+  mrp: number;
+  quantity: number;
+  purchase_invoice_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export function usePharmacyData() {
-  const [medicines, setMedicines] = useState<Medicine[]>(DEMO_MEDICINES);
-  const [batches, setBatches] = useState<Batch[]>(DEMO_BATCHES);
-  const [todaySales, setTodaySales] = useState(12450);
-  const [isLoading, setIsLoading] = useState(false);
+  const [medicines, setMedicines] = useState<Medicine[]>([]);
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [todaySales, setTodaySales] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const { toast } = useToast();
+
+  // Fetch medicines from database
+  const fetchMedicines = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('medicines')
+      .select('*')
+      .eq('is_active', true)
+      .order('name');
+    
+    if (error) {
+      console.error('Error fetching medicines:', error);
+      return [];
+    }
+    
+    return (data as DbMedicine[]).map((m): Medicine => ({
+      id: m.id,
+      name: m.name,
+      manufacturer: m.manufacturer || undefined,
+      category: m.category || undefined,
+      hsnCode: m.hsn_code || undefined,
+      gstRate: Number(m.gst_rate),
+      isActive: m.is_active,
+    }));
+  }, []);
+
+  // Fetch batches from database
+  const fetchBatches = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('batches')
+      .select('*')
+      .order('expiry_date');
+    
+    if (error) {
+      console.error('Error fetching batches:', error);
+      return [];
+    }
+    
+    return (data as DbBatch[]).map((b): Batch => ({
+      id: b.id,
+      medicineId: b.medicine_id,
+      batchNumber: b.batch_number,
+      expiryDate: b.expiry_date,
+      purchaseRate: Number(b.purchase_rate),
+      mrp: Number(b.mrp),
+      quantity: b.quantity,
+      purchaseInvoiceId: b.purchase_invoice_id || '',
+    }));
+  }, []);
+
+  // Fetch today's sales total
+  const fetchTodaySales = useCallback(async () => {
+    const today = new Date().toISOString().split('T')[0];
+    const { data, error } = await supabase
+      .from('sales')
+      .select('net_amount')
+      .gte('created_at', today);
+    
+    if (error) {
+      console.error('Error fetching today sales:', error);
+      return 0;
+    }
+    
+    return data.reduce((sum, sale) => sum + Number(sale.net_amount), 0);
+  }, []);
+
+  // Initial data load
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      const [meds, batchList, sales] = await Promise.all([
+        fetchMedicines(),
+        fetchBatches(),
+        fetchTodaySales(),
+      ]);
+      setMedicines(meds);
+      setBatches(batchList);
+      setTodaySales(sales);
+      setIsLoading(false);
+    };
+    loadData();
+  }, [fetchMedicines, fetchBatches, fetchTodaySales]);
+
+  // Refresh data
+  const refreshData = useCallback(async () => {
+    const [meds, batchList, sales] = await Promise.all([
+      fetchMedicines(),
+      fetchBatches(),
+      fetchTodaySales(),
+    ]);
+    setMedicines(meds);
+    setBatches(batchList);
+    setTodaySales(sales);
+  }, [fetchMedicines, fetchBatches, fetchTodaySales]);
 
   // Calculate stock alerts
-  const getStockAlerts = (): StockAlert[] => {
+  const getStockAlerts = useCallback((): StockAlert[] => {
     const alerts: StockAlert[] = [];
     const today = new Date();
     const thirtyDaysFromNow = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -42,7 +139,7 @@ export function usePharmacyData() {
       if (!medicine) return;
 
       const [year, month] = batch.expiryDate.split('-').map(Number);
-      const expiryDate = new Date(year, month - 1, 28); // End of month
+      const expiryDate = new Date(year, month - 1, 28);
 
       if (expiryDate < today) {
         alerts.push({
@@ -85,14 +182,14 @@ export function usePharmacyData() {
     });
 
     return alerts;
-  };
+  }, [medicines, batches]);
 
   const alerts = getStockAlerts();
   const lowStockCount = alerts.filter((a) => a.alertType === 'low_stock').length;
   const expiryAlertCount = alerts.filter((a) => a.alertType === 'expiring_soon' || a.alertType === 'expired').length;
 
   // Get medicine with stock info
-  const getMedicineWithStock = () => {
+  const getMedicineWithStock = useCallback(() => {
     return medicines.map((medicine) => {
       const medicineBatches = batches.filter((b) => b.medicineId === medicine.id);
       const totalQuantity = medicineBatches.reduce((sum, b) => sum + b.quantity, 0);
@@ -106,56 +203,147 @@ export function usePharmacyData() {
         batches: medicineBatches,
       };
     });
-  };
+  }, [medicines, batches]);
 
-  // Add stock from purchase invoice
-  const addPurchaseStock = (items: Array<{
-    medicineName: string;
-    quantity: number;
-    purchaseRate: number;
-    mrp: number;
-    batchNumber: string;
-    expiryDate: string;
-  }>) => {
-    const newBatches: Batch[] = [];
-    
-    items.forEach((item) => {
-      // Find or create medicine
-      let medicine = medicines.find(
-        (m) => m.name.toLowerCase() === item.medicineName.toLowerCase()
-      );
-      
-      if (!medicine) {
-        medicine = {
-          id: `med_${Date.now()}_${Math.random()}`,
-          name: item.medicineName,
-          gstRate: 12,
-          isActive: true,
-        };
-        setMedicines((prev) => [...prev, medicine!]);
+  // Add stock from purchase invoice (from OCR scan)
+  const addPurchaseStock = async (items: OCRItem[], invoiceData?: { supplierName?: string; invoiceNumber?: string; invoiceDate?: string }) => {
+    try {
+      // Create purchase invoice record
+      const { data: invoiceRecord, error: invoiceError } = await supabase
+        .from('purchase_invoices')
+        .insert({
+          invoice_number: invoiceData?.invoiceNumber || null,
+          invoice_date: invoiceData?.invoiceDate || null,
+          supplier_name: invoiceData?.supplierName || null,
+          total_amount: items.reduce((sum, item) => sum + (item.purchaseRate * item.quantity), 0),
+        })
+        .select()
+        .single();
+
+      if (invoiceError) {
+        console.error('Error creating invoice:', invoiceError);
+        throw invoiceError;
       }
 
-      // Create batch
-      const batch: Batch = {
-        id: `batch_${Date.now()}_${Math.random()}`,
-        medicineId: medicine.id,
-        batchNumber: item.batchNumber,
-        expiryDate: item.expiryDate,
-        purchaseRate: item.purchaseRate,
-        mrp: item.mrp,
-        quantity: item.quantity,
-        purchaseInvoiceId: `inv_${Date.now()}`,
-      };
-      
-      newBatches.push(batch);
-    });
+      for (const item of items) {
+        // Find existing medicine by name (case-insensitive)
+        const { data: existingMedicines } = await supabase
+          .from('medicines')
+          .select('*')
+          .ilike('name', item.medicineName);
+        
+        let medicineId: string;
+        
+        if (existingMedicines && existingMedicines.length > 0) {
+          medicineId = existingMedicines[0].id;
+        } else {
+          // Create new medicine
+          const { data: newMedicine, error: medError } = await supabase
+            .from('medicines')
+            .insert({
+              name: item.medicineName,
+              gst_rate: item.gstRate || 12,
+              is_active: true,
+            })
+            .select()
+            .single();
+          
+          if (medError) {
+            console.error('Error creating medicine:', medError);
+            throw medError;
+          }
+          medicineId = newMedicine.id;
+        }
 
-    setBatches((prev) => [...prev, ...newBatches]);
-    return newBatches;
+        // Create batch
+        const { error: batchError } = await supabase
+          .from('batches')
+          .insert({
+            medicine_id: medicineId,
+            batch_number: item.batchNumber,
+            expiry_date: item.expiryDate,
+            purchase_rate: item.purchaseRate,
+            mrp: item.mrp,
+            quantity: item.quantity,
+            purchase_invoice_id: invoiceRecord.id,
+          });
+        
+        if (batchError) {
+          console.error('Error creating batch:', batchError);
+          throw batchError;
+        }
+      }
+
+      // Refresh data after adding stock
+      await refreshData();
+      
+      return true;
+    } catch (error) {
+      console.error('Error adding purchase stock:', error);
+      throw error;
+    }
+  };
+
+  // Delete a batch
+  const deleteBatch = async (batchId: string) => {
+    const { error } = await supabase
+      .from('batches')
+      .delete()
+      .eq('id', batchId);
+    
+    if (error) {
+      console.error('Error deleting batch:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to delete batch',
+        variant: 'destructive',
+      });
+      return false;
+    }
+    
+    await refreshData();
+    return true;
+  };
+
+  // Delete a medicine (and all its batches via cascade)
+  const deleteMedicine = async (medicineId: string) => {
+    const { error } = await supabase
+      .from('medicines')
+      .delete()
+      .eq('id', medicineId);
+    
+    if (error) {
+      console.error('Error deleting medicine:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to delete medicine',
+        variant: 'destructive',
+      });
+      return false;
+    }
+    
+    await refreshData();
+    return true;
+  };
+
+  // Update batch quantity
+  const updateBatchQuantity = async (batchId: string, newQuantity: number) => {
+    const { error } = await supabase
+      .from('batches')
+      .update({ quantity: newQuantity })
+      .eq('id', batchId);
+    
+    if (error) {
+      console.error('Error updating batch:', error);
+      return false;
+    }
+    
+    await refreshData();
+    return true;
   };
 
   // Process sale (FIFO)
-  const processSale = (medicineId: string, quantity: number) => {
+  const processSale = async (medicineId: string, quantity: number) => {
     const medicineBatches = batches
       .filter((b) => b.medicineId === medicineId && b.quantity > 0)
       .sort((a, b) => a.expiryDate.localeCompare(b.expiryDate)); // FIFO by expiry
@@ -175,20 +363,19 @@ export function usePharmacyData() {
       throw new Error('Insufficient stock');
     }
 
-    // Update batch quantities
-    setBatches((prev) =>
-      prev.map((batch) => {
-        const sale = saleItems.find((s) => s.batchId === batch.id);
-        if (sale) {
-          return { ...batch, quantity: batch.quantity - sale.qty };
-        }
-        return batch;
-      })
-    );
+    // Update batch quantities in database
+    for (const item of saleItems) {
+      const batch = batches.find(b => b.id === item.batchId);
+      if (batch) {
+        await supabase
+          .from('batches')
+          .update({ quantity: batch.quantity - item.qty })
+          .eq('id', item.batchId);
+      }
+    }
 
-    // Update today's sales
-    const saleAmount = saleItems.reduce((sum, s) => sum + s.qty * s.mrp, 0);
-    setTodaySales((prev) => prev + saleAmount);
+    // Refresh data
+    await refreshData();
 
     return saleItems;
   };
@@ -204,5 +391,9 @@ export function usePharmacyData() {
     getMedicineWithStock,
     addPurchaseStock,
     processSale,
+    deleteBatch,
+    deleteMedicine,
+    updateBatchQuantity,
+    refreshData,
   };
 }

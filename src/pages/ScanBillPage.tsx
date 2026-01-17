@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { OCRResult, OCRItem } from '@/types/pharmacy';
 import { processOCR } from '@/lib/api/ocr';
+import { usePharmacyData } from '@/hooks/usePharmacyData';
 
-type ScanStep = 'capture' | 'processing' | 'review' | 'error';
+type ScanStep = 'capture' | 'processing' | 'review' | 'saving' | 'error';
 
 export default function ScanBillPage() {
   const [step, setStep] = useState<ScanStep>('capture');
@@ -20,6 +21,7 @@ export default function ScanBillPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { addPurchaseStock } = usePharmacyData();
 
   const handleCapture = async (file: File) => {
     // Create preview URL
@@ -68,12 +70,32 @@ export default function ScanBillPage() {
     }
   };
 
-  const handleConfirm = () => {
-    toast({
-      title: 'Stock Updated!',
-      description: `${editedItems.length} items added to inventory`,
-    });
-    navigate('/stock');
+  const handleConfirm = async () => {
+    if (editedItems.length === 0) return;
+    
+    setStep('saving');
+    
+    try {
+      await addPurchaseStock(editedItems, {
+        supplierName: ocrResult?.supplierName,
+        invoiceNumber: ocrResult?.invoiceNumber,
+        invoiceDate: ocrResult?.invoiceDate,
+      });
+      
+      toast({
+        title: 'Stock Updated!',
+        description: `${editedItems.length} items added to inventory`,
+      });
+      navigate('/stock');
+    } catch (error) {
+      console.error('Error saving stock:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to save stock. Please try again.',
+        variant: 'destructive',
+      });
+      setStep('review');
+    }
   };
 
   const updateItem = (index: number, field: keyof OCRItem, value: string | number) => {
@@ -108,6 +130,11 @@ export default function ScanBillPage() {
       <div className="p-4">
         {step === 'capture' && (
           <div className="space-y-6">
+            {/* Store Name */}
+            <div className="text-center py-2">
+              <h2 className="text-lg font-bold text-primary">Radhe Medical Store</h2>
+            </div>
+            
             {/* Instructions */}
             <div className="bg-secondary rounded-xl p-4">
               <h3 className="font-semibold text-foreground mb-2">How to scan</h3>
@@ -178,6 +205,18 @@ export default function ScanBillPage() {
           </div>
         )}
 
+        {step === 'saving' && (
+          <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-6">
+            <div className="text-center">
+              <Loader2 className="w-12 h-12 text-primary animate-spin mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-foreground">Saving to Database...</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Adding {editedItems.length} items to stock
+              </p>
+            </div>
+          </div>
+        )}
+
         {step === 'error' && (
           <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-6">
             {capturedImage && (
@@ -216,6 +255,12 @@ export default function ScanBillPage() {
 
         {step === 'review' && ocrResult && (
           <div className="space-y-4">
+            {/* Store Name */}
+            <div className="text-center">
+              <span className="text-xs text-muted-foreground">Adding stock to</span>
+              <h2 className="text-lg font-bold text-primary">Radhe Medical Store</h2>
+            </div>
+            
             {/* Invoice Header */}
             <div className="bg-card rounded-xl border border-border p-4 card-elevated">
               <div className="grid grid-cols-2 gap-4 text-sm">
