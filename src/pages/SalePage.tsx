@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Plus, Minus, ShoppingCart, Check, Trash2 } from 'lucide-react';
+import { Search, Plus, Minus, ShoppingCart, Check, Trash2, Loader2 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,8 @@ interface CartItem {
 export default function SalePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const { getMedicineWithStock, processSale } = usePharmacyData();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const { getMedicineWithStock, processSale, isLoading } = usePharmacyData();
   const { toast } = useToast();
 
   const medicinesWithStock = getMedicineWithStock();
@@ -82,11 +83,15 @@ export default function SalePage() {
 
   const totalAmount = cart.reduce((sum, item) => sum + item.quantity * item.mrp, 0);
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
+    if (isProcessing) return;
+    
+    setIsProcessing(true);
+    
     try {
-      cart.forEach((item) => {
-        processSale(item.medicineId, item.quantity);
-      });
+      for (const item of cart) {
+        await processSale(item.medicineId, item.quantity);
+      }
       
       toast({
         title: 'Sale Completed!',
@@ -97,15 +102,22 @@ export default function SalePage() {
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to process sale',
+        description: 'Failed to process sale. Check stock availability.',
         variant: 'destructive',
       });
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   return (
     <AppLayout title="New Sale">
       <div className="p-4 space-y-4 pb-40">
+        {/* Store Name */}
+        <div className="text-center">
+          <h2 className="text-lg font-bold text-primary">Radhe Medical Store</h2>
+        </div>
+
         {/* Search */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
@@ -114,6 +126,7 @@ export default function SalePage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-10 h-12 text-base"
+            disabled={isLoading}
           />
         </div>
 
@@ -224,10 +237,20 @@ export default function SalePage() {
           </div>
           <Button
             onClick={handleCheckout}
+            disabled={isProcessing}
             className="w-full h-14 text-base font-semibold touch-feedback"
           >
-            <Check className="w-5 h-5 mr-2" />
-            Complete Sale
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                Processing...
+              </>
+            ) : (
+              <>
+                <Check className="w-5 h-5 mr-2" />
+                Complete Sale
+              </>
+            )}
           </Button>
         </div>
       )}

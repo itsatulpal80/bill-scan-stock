@@ -30,19 +30,17 @@ export default function DashboardPage() {
   };
 
   return (
-    <AppLayout title="MedStock Pro">
+    <AppLayout title="Radhe Medical Store">
       <div className="p-4 space-y-6">
         {/* Welcome Section */}
         <div>
-          <h2 className="text-xl font-bold text-foreground">
-            Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 17 ? 'Afternoon' : 'Evening'}!
-          </h2>
+          <h2 className="text-xl font-bold text-primary">Radhe Medical Store</h2>
           <p className="text-muted-foreground text-sm mt-1">
             {new Date().toLocaleDateString('en-IN', { 
               weekday: 'long', 
               day: 'numeric', 
               month: 'long' 
-            })}
+            })} • Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 17 ? 'Afternoon' : 'Evening'}!
           </p>
         </div>
 
@@ -122,22 +120,14 @@ export default function DashboardPage() {
         </div>
 
         {/* Recent Activity - Owner only */}
-        {isOwner && (
+        {isOwner && todaySales > 0 && (
           <div>
             <h3 className="text-lg font-semibold text-foreground mb-3">Today's Summary</h3>
             <div className="bg-card rounded-xl border border-border p-4 card-elevated">
               <div className="space-y-3">
-                <div className="flex justify-between items-center pb-3 border-b border-border">
+                <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">Total Sales</span>
                   <span className="font-semibold text-success">{formatCurrency(todaySales)}</span>
-                </div>
-                <div className="flex justify-between items-center pb-3 border-b border-border">
-                  <span className="text-muted-foreground">Bills Generated</span>
-                  <span className="font-semibold">12</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Items Sold</span>
-                  <span className="font-semibold">48</span>
                 </div>
               </div>
             </div>
