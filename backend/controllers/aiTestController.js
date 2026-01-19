@@ -1,4 +1,4 @@
-import { callGoogleGenerative } from '../services/aiService.js';
+import { callGoogleGenerative, callOpenAI } from '../services/aiService.js';
 import { info, error } from '../utils/logger.js';
 
 export async function aiTest(req, res) {

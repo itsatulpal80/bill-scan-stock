@@ -1,4 +1,4 @@
-import { callGoogleGenerative, extractContentFromAIResponse } from '../services/aiService.js';
+import { callGoogleGenerative, callOpenAI, extractContentFromAIResponse } from '../services/aiService.js';
 import { connectDb, getDb } from '../models/db.js';
 import { info, error } from '../utils/logger.js';
 
@@ -13,16 +13,19 @@ export async function handleOcr(req, res, options = {}) {
 
     const systemPrompt = options.systemPrompt || `You are an OCR specialist for Indian pharmacy purchase bills/invoices.\nExtract structured data from medicine purchase bills/invoices.`;
 
+    const OPENAI_KEY = process.env.OPENAI_API_KEY;
+    const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
     const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
     const GOOGLE_MODEL = process.env.GOOGLE_MODEL || 'google/gemini-2.5-flash';
 
-    if (!GOOGLE_API_KEY) return res.status(500).json({ success: false, error: 'AI service not configured (set GOOGLE_API_KEY)' });
+    if (!OPENAI_KEY && !GOOGLE_API_KEY) return res.status(500).json({ success: false, error: 'AI service not configured (set OPENAI_API_KEY or GOOGLE_API_KEY)' });
 
     const promptText = `${systemPrompt}\n\nUser instruction: Extract all medicine details from this pharmacy purchase bill/invoice image. Return valid JSON only.\nIMAGE_DATA:${imageBase64.startsWith('data:') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`}`;
 
     let aiRes;
     try {
-      aiRes = await callGoogleGenerative(GOOGLE_MODEL, GOOGLE_API_KEY, promptText);
+      if (OPENAI_KEY) aiRes = await callOpenAI(OPENAI_MODEL, OPENAI_KEY, promptText);
+      else aiRes = await callGoogleGenerative(GOOGLE_MODEL, GOOGLE_API_KEY, promptText);
     } catch (err) {
       error('AI call exception', err);
       return res.status(500).json({ success: false, error: 'AI service call failed', rawError: err instanceof Error ? err.message : String(err) });

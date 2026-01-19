@@ -26,6 +26,22 @@ export async function callOpenAI(model, apiKey, promptText) {
   }
 }
 
+// Google Generative Language API (fallback)
+export async function callGoogleGenerative(model, apiKey, promptText) {
+  const url = `https://generativelanguage.googleapis.com/v1beta2/models/${encodeURIComponent(model)}:generate?key=${apiKey}`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: { text: promptText }, temperature: 0.1, max_output_tokens: 4000 }),
+    });
+    return res;
+  } catch (err) {
+    error('Google AI call failed', err);
+    throw err;
+  }
+}
+
 // Keep a generic extractor to support multiple AI response shapes
 export function extractContentFromAIResponse(aiData) {
   // OpenAI chat completion format
