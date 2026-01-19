@@ -183,6 +183,77 @@ export function usePharmacyData() {
 
   // Add stock from purchase invoice (from OCR scan)
   const addPurchaseStock = async (items: OCRItem[], invoiceData?: { supplierName?: string; invoiceNumber?: string; invoiceDate?: string }) => {
+    const BACKEND_URL = (import.meta.env.VITE_API_URL as string) || '';
+
+    // Try backend save if configured
+    if (BACKEND_URL) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/purchase`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items, invoice: invoiceData }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+        if (res.ok && json && json.success) {
+          toast({ title: 'Saved', description: 'Purchase saved to server database' });
+          // Keep local UI in sync by also adding to localStorage DB
+          const db = loadDB();
+          const invoiceId = `inv_${Date.now()}`;
+          const created_at = new Date().toISOString();
+          const invoice = {
+            id: invoiceId,
+            invoice_number: invoiceData?.invoiceNumber || null,
+            invoice_date: invoiceData?.invoiceDate || null,
+            supplier_name: invoiceData?.supplierName || null,
+            total_amount: items.reduce((sum, item) => sum + (item.purchaseRate * item.quantity), 0),
+            created_at,
+          };
+          db.purchase_invoices.push(invoice);
+
+          for (const item of items) {
+            const existing = db.medicines.find(m => m.name.toLowerCase() === item.medicineName.toLowerCase());
+            let medicineId = existing?.id;
+            if (!medicineId) {
+              medicineId = `med_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+              db.medicines.push({
+                id: medicineId,
+                name: item.medicineName,
+                manufacturer: item.manufacturer || undefined,
+                category: item.category || undefined,
+                hsnCode: item.hsnCode || undefined,
+                gstRate: item.gstRate || 12,
+                isActive: true,
+              });
+            }
+
+            const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+            db.batches.push({
+              id: batchId,
+              medicineId,
+              batchNumber: item.batchNumber,
+              expiryDate: item.expiryDate,
+              purchaseRate: item.purchaseRate,
+              mrp: item.mrp,
+              quantity: item.quantity,
+              purchaseInvoiceId: invoiceId,
+            });
+          }
+
+          saveDB(db);
+          await refreshData();
+          return true;
+        }
+
+        // If server returned an error, fallthrough to local save below
+        toast({ title: 'Server Error', description: json.error || 'Failed to save on server', variant: 'destructive' });
+      } catch (err) {
+        console.error('Backend save failed:', err);
+        toast({ title: 'Network Error', description: 'Failed to reach backend, saving locally', variant: 'destructive' });
+      }
+    }
+
+    // Fallback local save (existing behavior)
     const db = loadDB();
     const invoiceId = `inv_${Date.now()}`;
     const created_at = new Date().toISOString();

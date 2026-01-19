@@ -1,13 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, UserRole } from '@/types/pharmacy';
+import { useToast } from '@/hooks/use-toast';
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (mobile: string, otp: string) => Promise<boolean>;
+  login: (mobile: string, password: string) => Promise<boolean>;
+  signup: (mobile: string, password: string, name?: string) => Promise<boolean>;
   logout: () => void;
-  switchRole: (role: UserRole) => void; // For demo purposes
+  switchRole: (role: UserRole) => void; // For demo/testing
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -42,31 +44,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setIsLoading(false);
   }, []);
+  const API = (import.meta.env.VITE_API_URL as string) || '';
+  const { toast } = useToast();
 
-  const login = async (mobile: string, _otp: string): Promise<boolean> => {
+  const login = async (mobile: string, password: string): Promise<boolean> => {
     setIsLoading(true);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      console.debug('Auth login', { mobile });
+      const res = await fetch(`${API}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile, password }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        const { user: u, token } = json;
+        setUser(u);
+        localStorage.setItem('pharma_user', JSON.stringify(u));
+        localStorage.setItem('pharma_token', token);
+        toast({ title: 'Logged in', description: `Welcome ${u.name || u.mobile}` });
+        setIsLoading(false);
+        return true;
+      }
+      toast({ title: 'Login failed', description: json?.error || 'Invalid credentials', variant: 'destructive' });
+      setIsLoading(false);
+      return false;
+    } catch (err) {
+      setIsLoading(false);
+      return false;
+    }
+  };
 
-    // Demo: any mobile starting with 9 logs in as owner, others as staff
-    const role = mobile.startsWith('9') ? 'owner' : 'staff';
-    const demoUser = DEMO_USERS[role];
-    
-    const loggedInUser = {
-      ...demoUser,
-      mobile,
-      name: role === 'owner' ? 'Rajesh Kumar' : 'Amit Sharma',
-    };
-
-    setUser(loggedInUser);
-    localStorage.setItem('pharma_user', JSON.stringify(loggedInUser));
-    setIsLoading(false);
-    return true;
+  const signup = async (mobile: string, password: string, name?: string): Promise<boolean> => {
+    setIsLoading(true);
+    try {
+      console.debug('Auth signup', { mobile, name });
+      const res = await fetch(`${API}/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile, password, name }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        const { user: u, token } = json;
+        setUser(u);
+        localStorage.setItem('pharma_user', JSON.stringify(u));
+        localStorage.setItem('pharma_token', token);
+        toast({ title: 'Account created', description: `Welcome ${u.name || u.mobile}` });
+        setIsLoading(false);
+        return true;
+      }
+      toast({ title: 'Signup failed', description: json?.error || 'Unable to create account', variant: 'destructive' });
+      setIsLoading(false);
+      return false;
+    } catch (err) {
+      setIsLoading(false);
+      return false;
+    }
   };
 
   const logout = () => {
     setUser(null);
     localStorage.removeItem('pharma_user');
+    localStorage.removeItem('pharma_token');
   };
 
   const switchRole = (role: UserRole) => {
@@ -84,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         isLoading,
         login,
+        signup,
         logout,
         switchRole,
       }}
