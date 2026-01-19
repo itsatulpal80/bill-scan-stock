@@ -1,7 +1,28 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
 import { Medicine, Batch, StockAlert, OCRItem } from '@/types/pharmacy';
 import { useToast } from '@/hooks/use-toast';
+
+// LocalStorage-backed mock DB to replace Supabase for UI-only mode.
+type DBShape = {
+  medicines: Medicine[];
+  batches: Batch[];
+  sales: Array<{ id: string; net_amount: number; created_at: string }>;
+  purchase_invoices: Array<{ id: string; invoice_number?: string; invoice_date?: string; supplier_name?: string; total_amount?: number; created_at: string }>;
+};
+
+const STORAGE_KEY = 'pharma_local_db_v1';
+
+function loadDB(): DBShape {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) return JSON.parse(raw) as DBShape;
+  const init: DBShape = { medicines: [], batches: [], sales: [], purchase_invoices: [] };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(init));
+  return init;
+}
+
+function saveDB(db: DBShape) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+}
 
 interface DbMedicine {
   id: string;
@@ -37,66 +58,21 @@ export function usePharmacyData() {
 
   // Fetch medicines from database
   const fetchMedicines = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('medicines')
-      .select('*')
-      .eq('is_active', true)
-      .order('name');
-    
-    if (error) {
-      console.error('Error fetching medicines:', error);
-      return [];
-    }
-    
-    return (data as DbMedicine[]).map((m): Medicine => ({
-      id: m.id,
-      name: m.name,
-      manufacturer: m.manufacturer || undefined,
-      category: m.category || undefined,
-      hsnCode: m.hsn_code || undefined,
-      gstRate: Number(m.gst_rate),
-      isActive: m.is_active,
-    }));
+    const db = loadDB();
+    return db.medicines;
   }, []);
 
   // Fetch batches from database
   const fetchBatches = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('batches')
-      .select('*')
-      .order('expiry_date');
-    
-    if (error) {
-      console.error('Error fetching batches:', error);
-      return [];
-    }
-    
-    return (data as DbBatch[]).map((b): Batch => ({
-      id: b.id,
-      medicineId: b.medicine_id,
-      batchNumber: b.batch_number,
-      expiryDate: b.expiry_date,
-      purchaseRate: Number(b.purchase_rate),
-      mrp: Number(b.mrp),
-      quantity: b.quantity,
-      purchaseInvoiceId: b.purchase_invoice_id || '',
-    }));
+    const db = loadDB();
+    return db.batches;
   }, []);
 
   // Fetch today's sales total
   const fetchTodaySales = useCallback(async () => {
+    const db = loadDB();
     const today = new Date().toISOString().split('T')[0];
-    const { data, error } = await supabase
-      .from('sales')
-      .select('net_amount')
-      .gte('created_at', today);
-    
-    if (error) {
-      console.error('Error fetching today sales:', error);
-      return 0;
-    }
-    
-    return data.reduce((sum, sale) => sum + Number(sale.net_amount), 0);
+    return db.sales.filter(s => s.created_at >= today).reduce((sum, s) => sum + Number(s.net_amount), 0);
   }, []);
 
   // Initial data load
@@ -207,137 +183,86 @@ export function usePharmacyData() {
 
   // Add stock from purchase invoice (from OCR scan)
   const addPurchaseStock = async (items: OCRItem[], invoiceData?: { supplierName?: string; invoiceNumber?: string; invoiceDate?: string }) => {
-    try {
-      // Create purchase invoice record
-      const { data: invoiceRecord, error: invoiceError } = await supabase
-        .from('purchase_invoices')
-        .insert({
-          invoice_number: invoiceData?.invoiceNumber || null,
-          invoice_date: invoiceData?.invoiceDate || null,
-          supplier_name: invoiceData?.supplierName || null,
-          total_amount: items.reduce((sum, item) => sum + (item.purchaseRate * item.quantity), 0),
-        })
-        .select()
-        .single();
+    const db = loadDB();
+    const invoiceId = `inv_${Date.now()}`;
+    const created_at = new Date().toISOString();
 
-      if (invoiceError) {
-        console.error('Error creating invoice:', invoiceError);
-        throw invoiceError;
+    const invoice = {
+      id: invoiceId,
+      invoice_number: invoiceData?.invoiceNumber || null,
+      invoice_date: invoiceData?.invoiceDate || null,
+      supplier_name: invoiceData?.supplierName || null,
+      total_amount: items.reduce((sum, item) => sum + (item.purchaseRate * item.quantity), 0),
+      created_at,
+    };
+
+    db.purchase_invoices.push(invoice);
+
+    for (const item of items) {
+      const existing = db.medicines.find(m => m.name.toLowerCase() === item.medicineName.toLowerCase());
+      let medicineId = existing?.id;
+      if (!medicineId) {
+        medicineId = `med_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+        db.medicines.push({
+          id: medicineId,
+          name: item.medicineName,
+          manufacturer: item.manufacturer || undefined,
+          category: item.category || undefined,
+          hsnCode: item.hsnCode || undefined,
+          gstRate: item.gstRate || 12,
+          isActive: true,
+        });
       }
 
-      for (const item of items) {
-        // Find existing medicine by name (case-insensitive)
-        const { data: existingMedicines } = await supabase
-          .from('medicines')
-          .select('*')
-          .ilike('name', item.medicineName);
-        
-        let medicineId: string;
-        
-        if (existingMedicines && existingMedicines.length > 0) {
-          medicineId = existingMedicines[0].id;
-        } else {
-          // Create new medicine
-          const { data: newMedicine, error: medError } = await supabase
-            .from('medicines')
-            .insert({
-              name: item.medicineName,
-              gst_rate: item.gstRate || 12,
-              is_active: true,
-            })
-            .select()
-            .single();
-          
-          if (medError) {
-            console.error('Error creating medicine:', medError);
-            throw medError;
-          }
-          medicineId = newMedicine.id;
-        }
-
-        // Create batch
-        const { error: batchError } = await supabase
-          .from('batches')
-          .insert({
-            medicine_id: medicineId,
-            batch_number: item.batchNumber,
-            expiry_date: item.expiryDate,
-            purchase_rate: item.purchaseRate,
-            mrp: item.mrp,
-            quantity: item.quantity,
-            purchase_invoice_id: invoiceRecord.id,
-          });
-        
-        if (batchError) {
-          console.error('Error creating batch:', batchError);
-          throw batchError;
-        }
-      }
-
-      // Refresh data after adding stock
-      await refreshData();
-      
-      return true;
-    } catch (error) {
-      console.error('Error adding purchase stock:', error);
-      throw error;
+      const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+      db.batches.push({
+        id: batchId,
+        medicineId,
+        batchNumber: item.batchNumber,
+        expiryDate: item.expiryDate,
+        purchaseRate: item.purchaseRate,
+        mrp: item.mrp,
+        quantity: item.quantity,
+        purchaseInvoiceId: invoiceId,
+      });
     }
+
+    saveDB(db);
+    await refreshData();
+    return true;
   };
 
   // Delete a batch
   const deleteBatch = async (batchId: string) => {
-    const { error } = await supabase
-      .from('batches')
-      .delete()
-      .eq('id', batchId);
-    
-    if (error) {
-      console.error('Error deleting batch:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to delete batch',
-        variant: 'destructive',
-      });
+    const db = loadDB();
+    const idx = db.batches.findIndex(b => b.id === batchId);
+    if (idx === -1) {
+      toast({ title: 'Error', description: 'Batch not found', variant: 'destructive' });
       return false;
     }
-    
+    db.batches.splice(idx, 1);
+    saveDB(db);
     await refreshData();
     return true;
   };
 
   // Delete a medicine (and all its batches via cascade)
   const deleteMedicine = async (medicineId: string) => {
-    const { error } = await supabase
-      .from('medicines')
-      .delete()
-      .eq('id', medicineId);
-    
-    if (error) {
-      console.error('Error deleting medicine:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to delete medicine',
-        variant: 'destructive',
-      });
-      return false;
-    }
-    
+    const db = loadDB();
+    db.medicines = db.medicines.filter(m => m.id !== medicineId);
+    db.batches = db.batches.filter(b => b.medicineId !== medicineId);
+    saveDB(db);
     await refreshData();
     return true;
   };
 
   // Update batch quantity
   const updateBatchQuantity = async (batchId: string, newQuantity: number) => {
-    const { error } = await supabase
-      .from('batches')
-      .update({ quantity: newQuantity })
-      .eq('id', batchId);
-    
-    if (error) {
-      console.error('Error updating batch:', error);
-      return false;
-    }
-    
+    const db = loadDB();
+    const batch = db.batches.find(b => b.id === batchId);
+    if (!batch) return false;
+    batch.quantity = newQuantity;
+    saveDB(db);
     await refreshData();
     return true;
   };
@@ -363,20 +288,16 @@ export function usePharmacyData() {
       throw new Error('Insufficient stock');
     }
 
-    // Update batch quantities in database
+    // Update batch quantities in local DB
+    const db = loadDB();
     for (const item of saleItems) {
-      const batch = batches.find(b => b.id === item.batchId);
-      if (batch) {
-        await supabase
-          .from('batches')
-          .update({ quantity: batch.quantity - item.qty })
-          .eq('id', item.batchId);
-      }
+      const batch = db.batches.find(b => b.id === item.batchId);
+      if (batch) batch.quantity = batch.quantity - item.qty;
     }
-
-    // Refresh data
+    // add a sale record
+    db.sales.push({ id: `sale_${Date.now()}`, net_amount: saleItems.reduce((s, it) => s + it.mrp * it.qty, 0), created_at: new Date().toISOString() });
+    saveDB(db);
     await refreshData();
-
     return saleItems;
   };
 
