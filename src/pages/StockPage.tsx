@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Search,
   Calendar,
@@ -36,10 +36,12 @@ import {
   AlertDialogAction,
 } from '@/components/ui/alert-dialog';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+
 type ViewMode = 'all' | 'distributor';
 
 type Batch = {
-  id: string;
+  _id: string;
   batchNumber: string;
   expiryDate: string;
   quantity: number;
@@ -49,7 +51,7 @@ type Batch = {
 };
 
 type Medicine = {
-  id: string;
+  _id: string;
   name: string;
   batches: Batch[];
 };
@@ -65,6 +67,9 @@ export default function StockPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
+  const [loading, setLoading] = useState(false);
+  const [medicines, setMedicines] = useState<Medicine[]>([]);
+
   /* ---------------- FORM STATE ---------------- */
   const [distributor, setDistributor] = useState('');
   const [medicineName, setMedicineName] = useState('');
@@ -74,39 +79,65 @@ export default function StockPage() {
   const [mrp, setMrp] = useState(0);
   const [quantity, setQuantity] = useState(1);
 
-  /* ---------------- DUMMY DATA ---------------- */
-  const [medicines, setMedicines] = useState<Medicine[]>([
-    {
-      id: '1',
-      name: '4 OME CAP 1X15',
-      batches: [
-        {
-          id: 'b1',
-          batchNumber: 'C-2912',
-          expiryDate: '2027-10',
-          quantity: 20,
-          purchaseRate: 7,
-          mrp: 60,
-          distributor: 'PAL MEDICAL AGENCIES',
-        },
-      ],
-    },
-    {
-      id: '2',
-      name: 'ACNESTAR FACE WASH 50GM',
-      batches: [
-        {
-          id: 'b2',
-          batchNumber: 'A-110',
-          expiryDate: '2027-10',
-          quantity: 2,
-          purchaseRate: 80,
-          mrp: 150,
-          distributor: 'BHARSON HEALTHCARE',
-        },
-      ],
-    },
-  ]);
+  /* ---------------- FETCH STOCK ---------------- */
+  const fetchStock = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/stock`);
+      const json = await res.json();
+      if (json.success) {
+        setMedicines(json.data);
+      }
+    } catch (err) {
+      console.error('Fetch stock failed', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStock();
+  }, []);
+
+  /* ---------------- ADD STOCK (POST API) ---------------- */
+  const addStock = async () => {
+    if (!medicineName || !distributor) return;
+
+    try {
+      const res = await fetch(`${API_URL}/stock/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          medicineName,
+          batchNumber,
+          expiry,
+          purchaseRate,
+          mrp,
+          quantity,
+          distributor,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (json.success) {
+        setAddOpen(false);
+        setDistributor('');
+        setMedicineName('');
+        setBatchNumber('');
+        setExpiry('');
+        setPurchaseRate(0);
+        setMrp(0);
+        setQuantity(1);
+        fetchStock();
+      } else {
+        alert(json.message || 'Failed to add stock');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Network error');
+    }
+  };
 
   /* ---------------- HELPERS ---------------- */
   const formatExpiry = (date: string) => {
@@ -115,66 +146,16 @@ export default function StockPage() {
     return `${months[Number(m) - 1]} ${y}`;
   };
 
-  const selectedMedicine = medicines.find(m => m.id === selectedMedicineId);
-
-  /* ---------------- ADD STOCK ---------------- */
-  const addStock = () => {
-    if (!medicineName || !distributor) return;
-
-    const newBatch: Batch = {
-      id: Date.now().toString(),
-      batchNumber,
-      expiryDate: expiry,
-      quantity,
-      purchaseRate,
-      mrp,
-      distributor,
-    };
-
-    setMedicines(prev => {
-      const existing = prev.find(m => m.name.toLowerCase() === medicineName.toLowerCase());
-      if (existing) {
-        return prev.map(m =>
-          m.id === existing.id
-            ? { ...m, batches: [...m.batches, newBatch] }
-            : m
-        );
-      }
-      return [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          name: medicineName,
-          batches: [newBatch],
-        },
-      ];
-    });
-
-    setAddOpen(false);
-    setDistributor('');
-    setMedicineName('');
-    setBatchNumber('');
-    setExpiry('');
-    setPurchaseRate(0);
-    setMrp(0);
-    setQuantity(1);
-  };
-
-  /* ---------------- DELETE ---------------- */
-  const confirmDelete = () => {
-    if (!deleteTarget) return;
-    setMedicines(prev => prev.filter(m => m.id !== deleteTarget.id));
-    setDeleteOpen(false);
-    setDeleteTarget(null);
-    setSelectedMedicineId(null);
-  };
+  const selectedMedicine = medicines.find(m => m._id === selectedMedicineId);
 
   /* ---------------- DISTRIBUTOR GROUP ---------------- */
   const distributorMap: Record<string, Medicine[]> = {};
   medicines.forEach(m =>
     m.batches.forEach(b => {
       if (!distributorMap[b.distributor]) distributorMap[b.distributor] = [];
-      if (!distributorMap[b.distributor].includes(m)) distributorMap[b.distributor].push(m);
+      if (!distributorMap[b.distributor].some(x => x._id === m._id)) {
+        distributorMap[b.distributor].push(m);
+      }
     })
   );
 
@@ -195,7 +176,7 @@ export default function StockPage() {
             />
           </div>
 
-          <Button variant="outline" size="icon">
+          <Button variant="outline" size="icon" onClick={fetchStock}>
             <RefreshCw />
           </Button>
 
@@ -206,100 +187,87 @@ export default function StockPage() {
               </Button>
             </DialogTrigger>
 
-           <DialogContent className="max-w-md">
-  <DialogHeader className="relative">
-    <DialogTitle className="text-lg font-semibold">
-      Add New Stock
-    </DialogTitle>
-    <DialogDescription>
-      Manually add medicine to your inventory
-    </DialogDescription>
-  </DialogHeader>
+            {/* ===== MODAL ===== */}
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Add New Stock</DialogTitle>
+                <DialogDescription>
+                  Manually add medicine to your inventory
+                </DialogDescription>
+              </DialogHeader>
 
-  {/* FORM */}
-  <div className="space-y-4 mt-4">
+              <div className="space-y-4 mt-4">
+                <div>
+                  <label className="text-sm font-medium">Medicine Name</label>
+                  <Input value={medicineName} onChange={e => setMedicineName(e.target.value)} />
+                </div>
 
-    {/* Medicine Name */}
-    <div className="space-y-1">
-      <label className="text-sm font-medium">Medicine Name</label>
-      <Input
-        placeholder="Enter medicine name"
-        value={medicineName}
-        onChange={(e) => setMedicineName(e.target.value)}
-      />
-    </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm font-medium">Batch No.</label>
+                    <Input value={batchNumber} onChange={e => setBatchNumber(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium">Expiry (YYYY-MM)</label>
+                    <Input value={expiry} onChange={e => setExpiry(e.target.value)} />
+                  </div>
+                </div>
 
-    {/* Batch + Expiry */}
-    <div className="grid grid-cols-2 gap-3">
-      <div className="space-y-1">
-        <label className="text-sm font-medium">Batch No.</label>
-        <Input
-          placeholder="e.g., B001"
-          value={batchNumber}
-          onChange={(e) => setBatchNumber(e.target.value)}
-        />
-      </div>
-
-      <div className="space-y-1">
-        <label className="text-sm font-medium">Expiry (YYYY-MM)</label>
-        <Input
-          placeholder="e.g., 2025-12"
-          value={expiry}
-          onChange={(e) => setExpiry(e.target.value)}
-        />
-      </div>
-    </div>
-
-    {/* Purchase / MRP / Qty */}
-    <div className="grid grid-cols-3 gap-3">
-      <div className="space-y-1">
-        <label className="text-sm font-medium">Purchase ₹</label>
-        <Input
-          type="number"
-          value={purchaseRate}
-          onChange={(e) => setPurchaseRate(+e.target.value)}
-        />
-      </div>
-
-      <div className="space-y-1">
-        <label className="text-sm font-medium">MRP ₹</label>
-        <Input
-          type="number"
-          value={mrp}
-          onChange={(e) => setMrp(+e.target.value)}
-        />
-      </div>
-
-      <div className="space-y-1">
-        <label className="text-sm font-medium">Quantity</label>
-        <Input
-          type="number"
-          value={quantity}
-          onChange={(e) => setQuantity(+e.target.value)}
-        />
-      </div>
-    </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+  <div className="flex flex-col gap-1">
+    <label className="text-sm font-medium text-muted-foreground">
+      Purchase Price (₹)
+    </label>
+    <Input
+      type="number"
+      placeholder="Purchase ₹"
+      value={purchaseRate}
+      onChange={e => setPurchaseRate(+e.target.value)}
+    />
   </div>
 
-  {/* ACTIONS */}
-  <DialogFooter className="mt-6 flex flex-col gap-2">
-    <Button
-      className="w-full bg-emerald-600 text-white"
-      onClick={addStock}
-    >
-      Add Stock
-    </Button>
+  <div className="flex flex-col gap-1">
+    <label className="text-sm font-medium text-muted-foreground">
+      MRP (₹)
+    </label>
+    <Input
+      type="number"
+      placeholder="MRP ₹"
+      value={mrp}
+      onChange={e => setMrp(+e.target.value)}
+    />
+  </div>
 
-    <Button
-      variant="outline"
-      className="w-full"
-      onClick={() => setAddOpen(false)}
-    >
-      Cancel
-    </Button>
-  </DialogFooter>
-</DialogContent>
+  <div className="flex flex-col gap-1">
+    <label className="text-sm font-medium text-muted-foreground">
+      Quantity
+    </label>
+    <Input
+      type="number"
+      placeholder="Qty"
+      value={quantity}
+      onChange={e => setQuantity(+e.target.value)}
+    />
+  </div>
+</div>
 
+
+                <Input
+                  placeholder="Distributor"
+                  value={distributor}
+                  onChange={e => setDistributor(e.target.value)}
+                />
+              </div>
+
+              <DialogFooter className="mt-6 flex flex-col gap-2">
+                <Button className="bg-emerald-600 text-white" onClick={addStock}>
+                  Add Stock
+                </Button>
+                <Button variant="outline" onClick={() => setAddOpen(false)}>
+                  Cancel
+                </Button>
+              </DialogFooter>
+            </DialogContent>
           </Dialog>
         </div>
 
@@ -314,11 +282,15 @@ export default function StockPage() {
         </div>
 
         {/* CONTENT */}
-        {selectedMedicine ? (
+        {loading ? (
+          <div className="flex justify-center py-20">
+            <Loader2 className="animate-spin w-8 h-8" />
+          </div>
+        ) : selectedMedicine ? (
           <div>
             <button onClick={() => setSelectedMedicineId(null)}>← Back</button>
             {selectedMedicine.batches.map(b => (
-              <div key={b.id} className="border rounded-xl p-4 mt-3">
+              <div key={b._id} className="border rounded-xl p-4 mt-3">
                 <p className="font-semibold">Batch: {b.batchNumber}</p>
                 <p className="text-sm flex items-center gap-1">
                   <Calendar className="w-4 h-4" /> Exp: {formatExpiry(b.expiryDate)}
@@ -332,17 +304,10 @@ export default function StockPage() {
           medicines
             .filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()))
             .map(m => (
-              <div key={m.id} className="border rounded-xl p-4 flex justify-between">
-                <button onClick={() => setSelectedMedicineId(m.id)}>
+              <div key={m._id} className="border rounded-xl p-4">
+                <button onClick={() => setSelectedMedicineId(m._id)}>
                   {m.name} (Qty {m.batches.reduce((s,b)=>s+b.quantity,0)})
                 </button>
-                <Trash2
-                  className="text-destructive"
-                  onClick={() => {
-                    setDeleteTarget({ id: m.id, name: m.name });
-                    setDeleteOpen(true);
-                  }}
-                />
               </div>
             ))
         ) : (
@@ -354,7 +319,7 @@ export default function StockPage() {
               </button>
               {expandedDistributor === d &&
                 meds.map(m => (
-                  <button key={m.id} onClick={() => setSelectedMedicineId(m.id)} className="block w-full text-left px-4 py-2">
+                  <button key={m._id} onClick={() => setSelectedMedicineId(m._id)} className="block w-full text-left px-4 py-2">
                     {m.name}
                   </button>
                 ))}
@@ -362,22 +327,6 @@ export default function StockPage() {
           ))
         )}
       </div>
-
-      {/* DELETE */}
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete?</AlertDialogTitle>
-            <AlertDialogDescription>This cannot be undone</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive" onClick={confirmDelete}>
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </AppLayout>
   );
 }

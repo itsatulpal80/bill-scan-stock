@@ -1,54 +1,97 @@
-import fetch from 'node-fetch';
-import { error } from '../utils/logger.js';
+import fetch from "node-fetch";
+import { error } from "../utils/logger.js";
 
-// Calls OpenAI Chat Completions (preferred when OPENAI_API_KEY is set)
-export async function callOpenAI(model, apiKey, promptText) {
-  const url = `https://api.openai.com/v1/chat/completions`;
+/**
+ * ✅ OpenAI Vision OCR (LATEST Responses API)
+ */
+export async function callOpenAI(model, apiKey, imageBase64, systemPrompt) {
   try {
-    const body = {
-      model: model || 'gpt-3.5-turbo',
-      messages: [
-        { role: 'user', content: promptText }
-      ],
-      temperature: 0.1,
-      max_tokens: 2048,
-    };
+    const imageData = imageBase64.startsWith("data:")
+      ? imageBase64
+      : `data:image/jpeg;base64,${imageBase64}`;
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(body),
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: model || "gpt-4.1-mini",
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: systemPrompt }],
+          },
+          {
+            role: "user",
+            content: [
+              { type: "input_text", text: "Extract structured JSON from this pharmacy purchase bill." },
+              { type: "input_image", image_url: imageData },
+            ],
+          },
+        ],
+      }),
     });
-    return res;
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(
+        `OpenAI ${res.status}: ${JSON.stringify(data)}`
+      );
+    }
+
+    return data;
   } catch (err) {
-    error('OpenAI call failed', err);
+    error("OpenAI call failed", err);
     throw err;
   }
 }
 
-// Google Generative Language API (fallback)
+/**
+ * ✅ Google Gemini fallback (text only)
+ */
 export async function callGoogleGenerative(model, apiKey, promptText) {
-  const url = `https://generativelanguage.googleapis.com/v1beta2/models/${encodeURIComponent(model)}:generate?key=${apiKey}`;
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: { text: promptText }, temperature: 0.1, max_output_tokens: 4000 }),
-    });
-    return res;
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+        model
+      )}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: promptText }] }],
+        }),
+      }
+    );
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(
+        `Google AI ${res.status}: ${JSON.stringify(data)}`
+      );
+    }
+
+    return data;
   } catch (err) {
-    error('Google AI call failed', err);
+    error("Google AI call failed", err);
     throw err;
   }
 }
 
-// Keep a generic extractor to support multiple AI response shapes
+/**
+ * ✅ Unified extractor (UPDATED)
+ */
 export function extractContentFromAIResponse(aiData) {
-  // OpenAI chat completion format
-  if (aiData?.choices?.[0]?.message?.content) return aiData.choices[0].message.content;
-  // Older fields / other providers
-  if (aiData?.candidates?.[0]?.content) return aiData.candidates[0].content;
-  if (aiData?.output?.[0]?.content) return aiData.output[0].content;
-  if (typeof aiData?.generated_text === 'string') return aiData.generated_text;
+  // OpenAI Responses API
+  if (aiData?.output_text) return aiData.output_text;
+
+  // Google Gemini
+  if (aiData?.candidates?.[0]?.content?.parts?.[0]?.text)
+    return aiData.candidates[0].content.parts[0].text;
+
   return JSON.stringify(aiData);
 }

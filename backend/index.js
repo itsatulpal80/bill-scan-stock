@@ -14,7 +14,6 @@ import {
   listDistributors,
   getByDistributor,
   renameDistributor,
-  seedTestData,
 } from './controllers/stockController.js';
 
 import { connectDb } from './models/db.js';
@@ -60,7 +59,7 @@ app.post('/stock/manual', manualAddStock);                 // Manual Entry
 app.get('/stock/distributors', listDistributors);           // Distributor list
 app.get('/stock/distributor/:name', getByDistributor);      // Distributor details
 app.put('/stock/distributor', renameDistributor);           // Rename distributor
-app.post('/seed-test', seedTestData);                        // Seed demo data
+
 
 /* ================= AUTH ================= */
 app.post('/auth/signup', signup);
