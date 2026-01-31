@@ -1,19 +1,9 @@
 import { connectDb, getDb } from "../models/db.js";
 import { info, error } from "../utils/logger.js";
-import { execFile } from "child_process";
+import Tesseract from "tesseract.js";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
-
-/**
- * IMPORTANT:
- * - We DO NOT rely on PATH
- * - We DO NOT rely on npm tesseract.js
- * - We ALWAYS use full executable path
- */
-const TESSERACT_CMD =
-  process.env.TESSERACT_CMD ||
-  "C:\\Program Files\\Tesseract-OCR\\tesseract.exe";
 
 /**
  * Escape regex helper
@@ -23,36 +13,37 @@ function escapeRegex(s) {
 }
 
 /**
- * Run system Tesseract OCR safely
+ * Run Tesseract.js OCR (npm package, no system dependency)
  */
 async function runLocalOcr(imageBase64) {
-  const b64 = imageBase64.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
-  const imageBuffer = Buffer.from(b64, "base64");
-
-  const tmpFile = path.join(
-    os.tmpdir(),
-    `bill-ocr-${Date.now()}-${Math.random().toString(36).slice(2)}.png`
-  );
-
-  await fs.writeFile(tmpFile, imageBuffer);
-
   try {
-    const text = await new Promise((resolve, reject) => {
-      execFile(
-        TESSERACT_CMD,
-        [tmpFile, "stdout", "-l", "eng"],
-        { maxBuffer: 10 * 1024 * 1024 },
-        (err, stdout, stderr) => {
-          if (err) return reject(stderr || err);
-          resolve(stdout);
-        }
-      );
-    });
+    // Remove data URI prefix if present
+    const b64 = imageBase64.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
+    const imageBuffer = Buffer.from(b64, "base64");
 
-    return text;
-  } finally {
-    // cleanup temp file
-    fs.unlink(tmpFile).catch(() => {});
+    // Save temp file for Tesseract.js
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `bill-ocr-${Date.now()}-${Math.random().toString(36).slice(2)}.png`
+    );
+
+    await fs.writeFile(tmpFile, imageBuffer);
+
+    try {
+      // Run OCR using Tesseract.js
+      const {
+        data: { text },
+      } = await Tesseract.recognize(tmpFile, "eng");
+
+      info("Tesseract.js OCR success");
+      return text;
+    } finally {
+      // Cleanup temp file
+      await fs.unlink(tmpFile).catch(() => {});
+    }
+  } catch (err) {
+    error("Tesseract.js OCR error", err);
+    throw err;
   }
 }
 
@@ -141,17 +132,16 @@ export async function handleOcr(req, res) {
         .json({ success: false, error: "imageBase64 required" });
     }
 
-    // 1️⃣ Run local OCR (NO AI)
+    // 1️⃣ Run npm Tesseract.js OCR
     let rawText;
     try {
       rawText = await runLocalOcr(imageBase64);
-      info("Local OCR success");
+      info("Tesseract.js OCR success");
     } catch (ocrErr) {
-      error("Local OCR failed", ocrErr);
+      error("Tesseract.js OCR failed", ocrErr);
       return res.status(500).json({
         success: false,
-        error:
-          "Local OCR failed. Ensure Tesseract is installed and TESSERACT_CMD is correct.",
+        error: "OCR failed. Please ensure the image is clear and readable.",
       });
     }
 
