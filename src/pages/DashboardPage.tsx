@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Camera, 
@@ -14,12 +15,43 @@ import { ActionCard } from '@/components/ui/action-card';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePharmacyData } from '@/hooks/usePharmacyData';
 
+const API_URL = 'http://localhost:4001';
+
+interface AlertSummary {
+  expiredCount: number;
+  expiringCount: number;
+  lowStockCount: number;
+  totalAlerts: number;
+}
+
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { todaySales, lowStockCount, expiryAlertCount } = usePharmacyData();
+  const { todaySales } = usePharmacyData();
+  const [alertSummary, setAlertSummary] = useState<AlertSummary>({
+    expiredCount: 0,
+    expiringCount: 0,
+    lowStockCount: 0,
+    totalAlerts: 0,
+  });
 
   const isOwner = user?.role === 'owner';
+
+  useEffect(() => {
+    fetchAlertSummary();
+  }, []);
+
+  const fetchAlertSummary = async () => {
+    try {
+      const response = await fetch(`${API_URL}/stock/alerts/summary`);
+      const data = await response.json();
+      if (data.success) {
+        setAlertSummary(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching alert summary:', error);
+    }
+  };
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -28,6 +60,8 @@ export default function DashboardPage() {
       maximumFractionDigits: 0,
     }).format(amount);
   };
+
+  const expiryAlertCount = alertSummary.expiringCount + alertSummary.expiredCount;
 
   return (
     <AppLayout title="Radhe Medical Store">
@@ -54,10 +88,10 @@ export default function DashboardPage() {
           />
           <StatCard
             title="Low Stock"
-            value={lowStockCount}
+            value={alertSummary.lowStockCount}
             subtitle="Items need reorder"
             icon={<TrendingDown className="w-5 h-5" />}
-            variant={lowStockCount > 0 ? 'warning' : 'default'}
+            variant={alertSummary.lowStockCount > 0 ? 'warning' : 'default'}
             onClick={() => navigate('/alerts')}
           />
         </div>
@@ -114,7 +148,7 @@ export default function DashboardPage() {
               description="Manage expired & low stock items"
               icon={<AlertTriangle className="w-6 h-6 text-warning" />}
               onClick={() => navigate('/alerts')}
-              badge={expiryAlertCount > 0 ? expiryAlertCount : undefined}
+              badge={alertSummary.totalAlerts > 0 ? alertSummary.totalAlerts : undefined}
             />
           </div>
         </div>

@@ -1,21 +1,65 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AlertTriangle, Clock, TrendingDown, Package, RotateCcw, Trash2 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
-import { usePharmacyData } from '@/hooks/usePharmacyData';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
 type AlertTab = 'expired' | 'expiring' | 'low_stock';
 
+interface Alert {
+  medicineId: string;
+  medicineName: string;
+  batchNumber?: string;
+  expiryDate?: string;
+  quantity?: number;
+  distributor?: string;
+  currentQuantity?: number;
+  minQuantity?: number;
+  alertType: string;
+}
+
+const API_URL = 'http://localhost:4001';
+
 export default function AlertsPage() {
   const [activeTab, setActiveTab] = useState<AlertTab>('expiring');
-  const { alerts } = usePharmacyData();
+  const [expiredAlerts, setExpiredAlerts] = useState<Alert[]>([]);
+  const [expiringAlerts, setExpiringAlerts] = useState<Alert[]>([]);
+  const [lowStockAlerts, setLowStockAlerts] = useState<Alert[]>([]);
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  const expiredAlerts = alerts.filter((a) => a.alertType === 'expired');
-  const expiringAlerts = alerts.filter((a) => a.alertType === 'expiring_soon');
-  const lowStockAlerts = alerts.filter((a) => a.alertType === 'low_stock');
+  useEffect(() => {
+    fetchAlerts();
+  }, []);
+
+  const fetchAlerts = async () => {
+    try {
+      setLoading(true);
+      const [expiredRes, expiringRes, lowStockRes] = await Promise.all([
+        fetch(`${API_URL}/stock/alerts/expired`),
+        fetch(`${API_URL}/stock/alerts/expiring-soon`),
+        fetch(`${API_URL}/stock/alerts/low-stock`),
+      ]);
+
+      const expiredData = await expiredRes.json();
+      const expiringData = await expiringRes.json();
+      const lowStockData = await lowStockRes.json();
+
+      if (expiredData.success) setExpiredAlerts(expiredData.data);
+      if (expiringData.success) setExpiringAlerts(expiringData.data);
+      if (lowStockData.success) setLowStockAlerts(lowStockData.data);
+    } catch (error) {
+      console.error('Error fetching alerts:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to fetch alerts',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const tabs = [
     { id: 'expired' as AlertTab, label: 'Expired', count: expiredAlerts.length, icon: AlertTriangle },
@@ -148,7 +192,7 @@ export default function AlertsPage() {
                           Only {alert.currentQuantity} units left
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          Minimum: {alert.minQuantity} units
+                          Minimum: {alert.quantity} units
                         </p>
                       </div>
                     )}

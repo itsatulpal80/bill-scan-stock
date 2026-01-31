@@ -8,6 +8,7 @@ import {
   Plus,
   ChevronDown,
   ChevronRight,
+  Package,
 } from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -36,7 +37,7 @@ import {
   AlertDialogAction,
 } from '@/components/ui/alert-dialog';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4001';
 
 type ViewMode = 'all' | 'distributor';
 

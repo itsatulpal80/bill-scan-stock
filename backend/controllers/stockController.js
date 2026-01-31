@@ -3,6 +3,164 @@ import { ObjectId } from 'mongodb';
 import { getDb } from '../models/db.js';
 
 /* =================================================
+   GET /stock/alerts/expired
+   Get expired medicines
+   ================================================= */
+export async function getExpiredMedicines(req, res) {
+  try {
+    const db = getDb();
+    const today = new Date();
+    const medicines = await db.collection('medicines').find({}).toArray();
+
+    const expired = [];
+    medicines.forEach((m) => {
+      (m.batches || []).forEach((b) => {
+        if (b.expiryDate) {
+          const [year, month] = b.expiryDate.split('-');
+          const expiryDate = new Date(`${year}-${month}-01`);
+          expiryDate.setMonth(expiryDate.getMonth() + 1);
+          expiryDate.setDate(0); // last day of month
+          if (expiryDate < today) {
+            expired.push({
+              medicineId: m._id.toString(),
+              medicineName: m.name,
+              batchNumber: b.batchNumber,
+              expiryDate: b.expiryDate,
+              quantity: b.quantity,
+              distributor: b.distributor,
+              alertType: 'expired',
+            });
+          }
+        }
+      });
+    });
+
+    res.json({ success: true, data: expired });
+  } catch (err) {
+    console.error('getExpiredMedicines error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+/* =================================================
+   GET /stock/alerts/expiring-soon
+   Get medicines expiring within 3 months
+   ================================================= */
+export async function getExpiringMedicines(req, res) {
+  try {
+    const db = getDb();
+    const today = new Date();
+    const threeMonthsLater = new Date();
+    threeMonthsLater.setMonth(threeMonthsLater.getMonth() + 3);
+
+    const medicines = await db.collection('medicines').find({}).toArray();
+
+    const expiring = [];
+    medicines.forEach((m) => {
+      (m.batches || []).forEach((b) => {
+        if (b.expiryDate) {
+          const [year, month] = b.expiryDate.split('-');
+          const expiryDate = new Date(`${year}-${month}-01`);
+          expiryDate.setMonth(expiryDate.getMonth() + 1);
+          expiryDate.setDate(0); // last day of month
+          if (expiryDate > today && expiryDate <= threeMonthsLater) {
+            expiring.push({
+              medicineId: m._id.toString(),
+              medicineName: m.name,
+              batchNumber: b.batchNumber,
+              expiryDate: b.expiryDate,
+              quantity: b.quantity,
+              distributor: b.distributor,
+              alertType: 'expiring_soon',
+            });
+          }
+        }
+      });
+    });
+
+    res.json({ success: true, data: expiring });
+  } catch (err) {
+    console.error('getExpiringMedicines error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+/* =================================================
+   GET /stock/alerts/low-stock
+   Get medicines with quantity < 3
+   ================================================= */
+export async function getLowStockMedicines(req, res) {
+  try {
+    const db = getDb();
+    const medicines = await db.collection('medicines').find({}).toArray();
+
+    const lowStock = [];
+    medicines.forEach((m) => {
+      const totalQty = (m.batches || []).reduce((sum, b) => sum + Number(b.quantity || 0), 0);
+      if (totalQty < 3 && totalQty > 0) {
+        lowStock.push({
+          medicineId: m._id.toString(),
+          medicineName: m.name,
+          currentQuantity: totalQty,
+          alertType: 'low_stock',
+        });
+      }
+    });
+
+    res.json({ success: true, data: lowStock });
+  } catch (err) {
+    console.error('getLowStockMedicines error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+/* =================================================
+   GET /stock/alerts/summary
+   Get alert counts for dashboard
+   ================================================= */
+export async function getAlertsSummary(req, res) {
+  try {
+    const db = getDb();
+    const today = new Date();
+    const threeMonthsLater = new Date();
+    threeMonthsLater.setMonth(threeMonthsLater.getMonth() + 3);
+
+    const medicines = await db.collection('medicines').find({}).toArray();
+
+    let expiredCount = 0, expiringCount = 0, lowStockCount = 0;
+
+    medicines.forEach((m) => {
+      const totalQty = (m.batches || []).reduce((sum, b) => sum + Number(b.quantity || 0), 0);
+      if (totalQty < 3 && totalQty > 0) lowStockCount++;
+
+      (m.batches || []).forEach((b) => {
+        if (b.expiryDate) {
+          const [year, month] = b.expiryDate.split('-');
+          const expiryDate = new Date(`${year}-${month}-01`);
+          expiryDate.setMonth(expiryDate.getMonth() + 1);
+          expiryDate.setDate(0);
+          if (expiryDate < today) expiredCount++;
+          else if (expiryDate <= threeMonthsLater) expiringCount++;
+        }
+      });
+    });
+
+    res.json({ 
+      success: true, 
+      data: { 
+        expiredCount, 
+        expiringCount, 
+        lowStockCount,
+        totalAlerts: expiredCount + expiringCount + lowStockCount
+      } 
+    });
+  } catch (err) {
+    console.error('getAlertsSummary error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+/* =================================================
    POST /stock/manual
    Manual stock entry (UI modal ke fields ke hisaab se)
    ================================================= */

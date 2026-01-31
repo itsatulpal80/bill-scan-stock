@@ -20,6 +20,10 @@ import {
   deleteBatch,
   deleteAllStock,
   renameDistributor,
+  getExpiredMedicines,
+  getExpiringMedicines,
+  getLowStockMedicines,
+  getAlertsSummary,
 } from './controllers/stockController.js';
 
 import { connectDb } from './models/db.js';
@@ -71,6 +75,12 @@ app.delete('/stock/medicine/:id', deleteMedicine);          // Delete medicine
 app.put('/stock/batch/:id', editBatch);                     // Edit batch
 app.delete('/stock/batch/:id', deleteBatch);                // Delete batch
 app.delete('/stock', deleteAllStock);                       // Delete all stock
+
+/* ================= ALERTS ================= */
+app.get('/stock/alerts/expired', getExpiredMedicines);      // Expired medicines
+app.get('/stock/alerts/expiring-soon', getExpiringMedicines); // Expiring soon medicines
+app.get('/stock/alerts/low-stock', getLowStockMedicines);   // Low stock medicines
+app.get('/stock/alerts/summary', getAlertsSummary);         // Alert summary for dashboard
 
 
 /* ================= AUTH ================= */
