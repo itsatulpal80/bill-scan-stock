@@ -89,13 +89,22 @@ export async function listAllStock(req, res) {
     const medicines = await medicinesCol.find({}).toArray();
 
     const data = medicines.map((m) => ({
-      id: m._id,
+      _id: m._id.toString(),
       name: m.name,
       totalQuantity: (m.batches || []).reduce(
         (sum, b) => sum + Number(b.quantity || 0),
         0
       ),
-      batches: m.batches || [],
+      batches: (m.batches || []).map((b) => ({
+        _id: b._id ? String(b._id) : undefined,
+        batchNumber: b.batchNumber,
+        expiryDate: b.expiryDate,
+        purchaseRate: b.purchaseRate,
+        mrp: b.mrp,
+        quantity: Number(b.quantity || 0),
+        distributor: b.distributor,
+        createdAt: b.createdAt,
+      })),
     }));
 
     res.json({ success: true, data });
@@ -192,6 +201,113 @@ export async function renameDistributor(req, res) {
     res.json({ success: true, message: 'Distributor renamed' });
   } catch (err) {
     console.error('renameDistributor error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+/* =================================================
+   PUT /stock/medicine/:id
+   Update medicine name
+   ================================================= */
+export async function editMedicineName(req, res) {
+  try {
+    const id = req.params.id;
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: 'name required' });
+
+    const db = getDb();
+    await db.collection('medicines').updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { name } }
+    );
+
+    res.json({ success: true, message: 'Medicine updated' });
+  } catch (err) {
+    console.error('editMedicineName error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+/* =================================================
+   DELETE /stock/medicine/:id
+   Delete whole medicine (all batches)
+   ================================================= */
+export async function deleteMedicine(req, res) {
+  try {
+    const id = req.params.id;
+    const db = getDb();
+    await db.collection('medicines').deleteOne({ _id: new ObjectId(id) });
+    res.json({ success: true, message: 'Medicine deleted' });
+  } catch (err) {
+    console.error('deleteMedicine error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+/* =================================================
+   PUT /stock/batch/:id
+   Update a batch by its _id
+   ================================================= */
+export async function editBatch(req, res) {
+  try {
+    const batchId = req.params.id;
+    const updates = req.body || {};
+    const db = getDb();
+
+    const setObj = {};
+    if (updates.batchNumber !== undefined) setObj['batches.$.batchNumber'] = updates.batchNumber;
+    if (updates.expiryDate !== undefined) setObj['batches.$.expiryDate'] = updates.expiryDate;
+    if (updates.purchaseRate !== undefined) setObj['batches.$.purchaseRate'] = Number(updates.purchaseRate || 0);
+    if (updates.mrp !== undefined) setObj['batches.$.mrp'] = Number(updates.mrp || 0);
+    if (updates.quantity !== undefined) setObj['batches.$.quantity'] = Number(updates.quantity || 0);
+    if (updates.distributor !== undefined) setObj['batches.$.distributor'] = updates.distributor;
+
+    if (Object.keys(setObj).length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid fields to update' });
+    }
+
+    await db.collection('medicines').updateOne(
+      { 'batches._id': new ObjectId(batchId) },
+      { $set: setObj }
+    );
+
+    res.json({ success: true, message: 'Batch updated' });
+  } catch (err) {
+    console.error('editBatch error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+/* =================================================
+   DELETE /stock/batch/:id
+   Remove a single batch
+   ================================================= */
+export async function deleteBatch(req, res) {
+  try {
+    const batchId = req.params.id;
+    const db = getDb();
+    await db.collection('medicines').updateOne(
+      { 'batches._id': new ObjectId(batchId) },
+      { $pull: { batches: { _id: new ObjectId(batchId) } } }
+    );
+    res.json({ success: true, message: 'Batch deleted' });
+  } catch (err) {
+    console.error('deleteBatch error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+/* =================================================
+   DELETE /stock
+   Delete ALL stock (use with caution)
+   ================================================= */
+export async function deleteAllStock(req, res) {
+  try {
+    const db = getDb();
+    await db.collection('medicines').deleteMany({});
+    res.json({ success: true, message: 'All stock cleared' });
+  } catch (err) {
+    console.error('deleteAllStock error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 }

@@ -13,6 +13,12 @@ import {
   manualAddStock,
   listDistributors,
   getByDistributor,
+  listAllStock,
+  editMedicineName,
+  deleteMedicine,
+  editBatch,
+  deleteBatch,
+  deleteAllStock,
   renameDistributor,
 } from './controllers/stockController.js';
 
@@ -56,9 +62,15 @@ app.post('/purchase', handlePurchase);
 
 /* ================= STOCK ================= */
 app.post('/stock/manual', manualAddStock);                 // Manual Entry
+app.get('/stock', listAllStock);                           // All stock
 app.get('/stock/distributors', listDistributors);           // Distributor list
 app.get('/stock/distributor/:name', getByDistributor);      // Distributor details
 app.put('/stock/distributor', renameDistributor);           // Rename distributor
+app.put('/stock/medicine/:id', editMedicineName);           // Edit medicine name
+app.delete('/stock/medicine/:id', deleteMedicine);          // Delete medicine
+app.put('/stock/batch/:id', editBatch);                     // Edit batch
+app.delete('/stock/batch/:id', deleteBatch);                // Delete batch
+app.delete('/stock', deleteAllStock);                       // Delete all stock
 
 
 /* ================= AUTH ================= */

@@ -1,101 +1,174 @@
-import {
-  callGoogleGenerative,
-  callOpenAI,
-  extractContentFromAIResponse,
-} from "../services/aiService.js";
 import { connectDb, getDb } from "../models/db.js";
 import { info, error } from "../utils/logger.js";
+import { execFile } from "child_process";
+import fs from "fs/promises";
+import path from "path";
+import os from "os";
 
+/**
+ * IMPORTANT:
+ * - We DO NOT rely on PATH
+ * - We DO NOT rely on npm tesseract.js
+ * - We ALWAYS use full executable path
+ */
+const TESSERACT_CMD =
+  process.env.TESSERACT_CMD ||
+  "C:\\Program Files\\Tesseract-OCR\\tesseract.exe";
+
+/**
+ * Escape regex helper
+ */
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export async function handleOcr(req, res, options = {}) {
+/**
+ * Run system Tesseract OCR safely
+ */
+async function runLocalOcr(imageBase64) {
+  const b64 = imageBase64.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
+  const imageBuffer = Buffer.from(b64, "base64");
+
+  const tmpFile = path.join(
+    os.tmpdir(),
+    `bill-ocr-${Date.now()}-${Math.random().toString(36).slice(2)}.png`
+  );
+
+  await fs.writeFile(tmpFile, imageBuffer);
+
+  try {
+    const text = await new Promise((resolve, reject) => {
+      execFile(
+        TESSERACT_CMD,
+        [tmpFile, "stdout", "-l", "eng"],
+        { maxBuffer: 10 * 1024 * 1024 },
+        (err, stdout, stderr) => {
+          if (err) return reject(stderr || err);
+          resolve(stdout);
+        }
+      );
+    });
+
+    return text;
+  } finally {
+    // cleanup temp file
+    fs.unlink(tmpFile).catch(() => {});
+  }
+}
+
+/**
+ * Very lightweight rule-based invoice parser
+ */
+function parseTextToInvoice(text) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const parsed = {
+    invoiceNumber: null,
+    invoiceDate: null,
+    supplierName: null,
+    items: [],
+  };
+
+  // Invoice number
+  for (const l of lines) {
+    const m = l.match(/invoice\s*(?:no|number|#)?[:\s]*([A-Z0-9\-\/]+)/i);
+    if (m) {
+      parsed.invoiceNumber = m[1];
+      break;
+    }
+  }
+
+  // Invoice date
+  for (const l of lines) {
+    const m = l.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/);
+    if (m) {
+      parsed.invoiceDate = m[1];
+      break;
+    }
+  }
+
+  // Supplier name (top lines heuristic)
+  for (const l of lines.slice(0, 5)) {
+    if (/invoice|bill|tax|gst|date/i.test(l)) continue;
+    parsed.supplierName = l;
+    break;
+  }
+
+  // Item rows
+  for (const l of lines) {
+    if (/total|subtotal|gst|tax|amount|invoice/i.test(l)) continue;
+
+    const nums = l.match(/\d+[.,]?\d*/g);
+    if (!nums || nums.length < 2) continue;
+
+    const cleaned = nums.map((n) => Number(n.replace(/,/g, "")));
+    const quantity = Math.round(cleaned[cleaned.length - 1] || 0);
+    const purchaseRate =
+      cleaned.length >= 2 ? cleaned[cleaned.length - 2] : 0;
+    const mrp =
+      cleaned.length >= 3 ? cleaned[cleaned.length - 3] : purchaseRate;
+
+    const nameMatch = l.match(/^(.*?)(?=\d)/);
+    const medicineName = nameMatch ? nameMatch[1].trim() : l;
+
+    parsed.items.push({
+      medicineName: medicineName || "unknown",
+      manufacturer: null,
+      batchNumber: null,
+      expiryDate: null,
+      purchaseRate: Number(purchaseRate || 0),
+      mrp: Number(mrp || 0),
+      quantity: Number(quantity || 0),
+      gstRate: 12,
+    });
+  }
+
+  return parsed;
+}
+
+/**
+ * MAIN OCR HANDLER
+ */
+export async function handleOcr(req, res) {
   try {
     const { imageBase64 } = req.body || {};
-    if (!imageBase64)
-      return res.status(400).json({ success: false, error: "imageBase64 required" });
-
-    const systemPrompt =
-      options.systemPrompt ||
-      `You are an OCR specialist for Indian pharmacy purchase bills.
-Return STRICT VALID JSON only.
-
-Schema:
-{
-  invoiceNumber: string|null,
-  invoiceDate: string|null,
-  supplierName: string|null,
-  items: [{
-    medicineName: string,
-    manufacturer: string|null,
-    batchNumber: string|null,
-    expiryDate: string|null,
-    purchaseRate: number,
-    mrp: number,
-    quantity: number,
-    gstRate: number
-  }]
-}`;
-
-    const OPENAI_KEY = process.env.OPENAI_API_KEY;
-    const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-    const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-    const GOOGLE_MODEL = process.env.GOOGLE_MODEL;
-
-    if (!OPENAI_KEY && !GOOGLE_API_KEY) {
+    if (!imageBase64) {
       return res
-        .status(500)
-        .json({ success: false, error: "AI not configured" });
+        .status(400)
+        .json({ success: false, error: "imageBase64 required" });
     }
 
-    let aiData;
+    // 1️⃣ Run local OCR (NO AI)
+    let rawText;
     try {
-      if (OPENAI_KEY) {
-        aiData = await callOpenAI(
-          OPENAI_MODEL,
-          OPENAI_KEY,
-          imageBase64,
-          systemPrompt
-        );
-      } else {
-        aiData = await callGoogleGenerative(
-          GOOGLE_MODEL,
-          GOOGLE_API_KEY,
-          systemPrompt
-        );
-      }
-    } catch (err) {
-      error("AI call failed", err);
-      return res
-        .status(500)
-        .json({ success: false, error: err.message });
-    }
-
-    const content = extractContentFromAIResponse(aiData);
-
-    let parsed;
-    try {
-      const jsonMatch =
-        content.match(/```(?:json)?\s*([\s\S]*?)```/) || [];
-      parsed = JSON.parse(jsonMatch[1] || content);
-    } catch (err) {
-      error("JSON parse failed", content);
-      return res.status(422).json({
+      rawText = await runLocalOcr(imageBase64);
+      info("Local OCR success");
+    } catch (ocrErr) {
+      error("Local OCR failed", ocrErr);
+      return res.status(500).json({
         success: false,
-        error: "Invalid JSON from AI",
-        raw: content,
+        error:
+          "Local OCR failed. Ensure Tesseract is installed and TESSERACT_CMD is correct.",
       });
     }
 
-    if (!Array.isArray(parsed.items)) {
-      return res
-        .status(422)
-        .json({ success: false, error: "Items not extracted" });
+    // 2️⃣ Parse OCR text
+    const parsed = parseTextToInvoice(rawText);
+
+    if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
+      return res.status(422).json({
+        success: false,
+        error: "No medicine items detected",
+        rawText,
+      });
     }
 
-    // ✅ Mongo save (UNCHANGED LOGIC)
+    // 3️⃣ Save to MongoDB (optional)
     let saved = { invoiceId: null, itemsInserted: 0 };
+
     if (process.env.MONGODB_URI) {
       await connectDb(process.env.MONGODB_URI);
       const db = getDb();
@@ -105,9 +178,9 @@ Schema:
       const invoicesCol = db.collection("purchase_invoices");
 
       const invoiceRes = await invoicesCol.insertOne({
-        invoice_number: parsed.invoiceNumber || null,
-        invoice_date: parsed.invoiceDate || null,
-        supplier_name: parsed.supplierName || null,
+        invoice_number: parsed.invoiceNumber,
+        invoice_date: parsed.invoiceDate,
+        supplier_name: parsed.supplierName,
         created_at: new Date(),
       });
 
@@ -124,18 +197,18 @@ Schema:
           existing?._id ||
           (await medicinesCol.insertOne({
             name: it.medicineName,
-            manufacturer: it.manufacturer || null,
+            manufacturer: it.manufacturer,
             gst_rate: it.gstRate || 12,
             created_at: new Date(),
           })).insertedId;
 
         await batchesCol.insertOne({
           medicine_id: medicineId,
-          batch_number: it.batchNumber || null,
-          expiry_date: it.expiryDate || null,
-          purchase_rate: Number(it.purchaseRate || 0),
-          mrp: Number(it.mrp || 0),
-          quantity: Number(it.quantity || 0),
+          batch_number: it.batchNumber,
+          expiry_date: it.expiryDate,
+          purchase_rate: it.purchaseRate,
+          mrp: it.mrp,
+          quantity: it.quantity,
           purchase_invoice_id: invoiceRes.insertedId,
           created_at: new Date(),
         });
@@ -144,10 +217,18 @@ Schema:
       }
     }
 
-    info("OCR success", saved);
-    return res.json({ success: true, data: parsed, saved });
+    info("OCR completed", saved);
+
+    return res.json({
+      success: true,
+      data: parsed,
+      saved,
+    });
   } catch (err) {
     error("OCR handler crash", err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+    });
   }
 }
